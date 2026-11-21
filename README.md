@@ -32,7 +32,7 @@ real.
 | Pay or cancel | Paying creates a pick job; cancelling or timing out gives the stock back; a paid order can still be cancelled until it is packed |
 | Pick | A picker claims the next order and gets lines in walking order, oldest batch first; when 4 or more orders wait, a picker takes 3 in one walk, one tote each |
 | Scan | Every line is checked by barcode; a wrong item is rejected; units can be scanned one at a time |
-| Empty shelf | The count is corrected, the line moves to another bin, or is dropped if none is left; if only some were there ("found 4 of 6"), those are kept |
+| Empty shelf | The bin's count is corrected (units other orders are still waiting for stay until their picker gets there), the line moves to another bin, or is dropped if none is left; if only some were there ("found 4 of 6"), those are kept |
 | Pack and hand off | Packing commits the sale and assigns a rider; the rider checks in for the crate slot, and the bag is handed over only if the scanned bag is that rider's order |
 | Restock | Low items are reordered from the hub every 15 minutes or on demand, in whole cases and within free shelf space; a received truck is put away and sellable at once |
 | Forecast | Reorder points are recalculated from a weekday-aware forecast; three models are compared by measured error (WAPE) |

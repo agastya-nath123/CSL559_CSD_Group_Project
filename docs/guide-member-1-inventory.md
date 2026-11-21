@@ -33,6 +33,7 @@ Open `app/modules/inventory/service.py` and read it top to bottom once (about 15
 | `adjust` | `POST /v1/stock-adjustments` | Damage, expiry, theft, count corrections | yes |
 | `commit_sale` | Pick & Pack (Member 2) | Removes picked units and ends their hold | no |
 | `write_off_missing` | Pick & Pack (Member 2) | Corrects the count when a shelf is empty | no |
+| `write_off_unpromised` | Pick & Pack (Member 2) | Then writes off the rest of that bin no unpacked order is waiting for (issue #61) | no |
 | `unreserve` | Members 2 and 1 | Gives a quantity back to ATP | no |
 | `allocate` | Fulfilment (Member 2) | Chooses bins: first expiry first, then nearest | read only |
 | `swap_line` | Pick & Pack (Member 2, task 2.4) | Holds a substitute and rewrites the order's lines | no |
@@ -314,8 +315,8 @@ A blind count: the counter is told which bin to count but **not** what the syste
    `config.py` (try 500).
 4. Apply differences with the existing `adjust(db, store, sku, delta, "count", bin_id=...)`.
 5. After Member 4 finishes task 4.2, protect `approve` and `reject` with `require_role("manager")`.
-6. **Count a bin when a picker finds it short.** `pickpack.report_short` writes off only the units
-   that one order needed, but an empty shelf usually means the whole bin's count is wrong.
+6. **Count a bin when a picker finds it short.** `pickpack.report_short` writes off the bin's units
+   except those other orders are still waiting for, but only a count shows what is really there.
    Subscribe to `stock.changed` with cause `not_found` and open a cycle count for that bin
    (the event payload has the SKU; add the `bin_id` to it with Member 2).
 

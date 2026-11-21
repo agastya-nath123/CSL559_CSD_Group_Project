@@ -28,6 +28,11 @@ def hold(client, order_id: str, sku_id: int, qty: int) -> None:
 def report_empty(client, sku_id: int, order_qty: int = 1, found: int | None = None, order_id: str = "s-1") -> dict:
     """Pay for `order_qty` of one item, claim it, and report its first line short."""
     place_paid_order(client, order_id, 1, [(sku_id, order_qty)])
+    return report_next(client, found)
+
+
+def report_next(client, found: int | None = None) -> dict:
+    """Claim the oldest paid order and report its first line short."""
     line = next_job(client)["tasks"][0]
     res = client.post(f"/v1/pick-tasks/{line['task_id']}/short", json={"found": found} if found is not None else None)
     assert res.status_code == 200, res.text
@@ -64,14 +69,17 @@ def test_with_nothing_left_in_the_category_the_offer_is_null_but_the_refund_is_s
 
 def test_the_nearest_price_wins_among_items_customers_can_still_buy_and_never_a_dearer_one(client, sku):
     atta, oil, rice, sugar = sku("Wheat atta"), sku("Sunflower oil"), sku("Basmati rice"), sku("Sugar")
+    # Both atta orders are paid before the shelf is found empty: after that, atta cannot be bought any more.
+    place_paid_order(client, "s-1", 1, [(atta, 6)])
+    place_paid_order(client, "s-2", 1, [(atta, 3)])
 
-    first = report_empty(client, atta, order_qty=6, found=4, order_id="s-1")   # 2 atta dropped, Rs 245 each
+    first = report_next(client, found=4)                                       # s-1: 2 atta dropped, Rs 245 each
     assert first["substitute_offer"]["sku_id"] == oil                          # Rs 155: 90 away (rice 105, sugar 197)
     assert events_of(client, "order.line_dropped")[0]["refund_amount"] == 490
 
     hold(client, "most-of-the-oil", oil, atp(client, 1, oil) - 1)              # 1 oil left; 2 are needed
     client.post(f"/v1/fulfilment-jobs/{first['job']['job_id']}/packed", json={"crate_slot": "S-01"})
-    second = report_empty(client, atta, order_qty=3, found=1, order_id="s-2")
+    second = report_next(client, found=1)                                      # s-2: 2 more atta dropped
     assert second["substitute_offer"]["sku_id"] == rice                        # Rs 140: 105 away
 
     client.post(f"/v1/fulfilment-jobs/{second['job']['job_id']}/packed", json={"crate_slot": "S-02"})

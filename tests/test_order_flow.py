@@ -71,7 +71,7 @@ def test_missing_item_is_picked_from_another_bin(client, sku):
     scan_all(client, result["job"])
     client.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"})
     row = client.get("/v1/stores/1/availability", params={"skus": str(milk)}).json()[0]
-    assert (row["on_hand"], row["reserved"]) == (22, 0)        # 30 - 4 written off - 4 sold
+    assert (row["on_hand"], row["reserved"]) == (20, 0)        # 30 - all 6 of the empty M-OLD written off - 4 sold
     assert_stock_is_consistent()
 
 
@@ -130,5 +130,5 @@ def test_units_already_in_the_tote_are_not_handed_out_again(client, sku):
     packed = client.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"})
     assert packed.status_code == 200 and packed.json()["state"] == "packed"
     row = client.get("/v1/stores/1/availability", params={"skus": str(milk)}).json()[0]
-    assert (row["on_hand"], row["reserved"]) == (22, 0)        # 30 - 6 sold - 2 written off
+    assert (row["on_hand"], row["reserved"]) == (0, 0)         # 30 - 6 sold - all 24 of the empty M-NEW written off
     assert_stock_is_consistent()

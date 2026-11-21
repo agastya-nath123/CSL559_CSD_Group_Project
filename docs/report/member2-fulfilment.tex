@@ -76,7 +76,9 @@ books; until then the units are only held, so a cancel never has to put stock ba
     corrected (a \texttt{not\_found} ledger row) and the line moves to another bin with spare stock, never units
     another customer holds. With none left it is dropped: the hold is released, \texttt{order.line\_dropped} carries
     the refund, and a substitute is offered (same category, enough to sell, no dearer than the missing item, nearest
-    price).
+    price). The rest of the bin is written off too, so customers cannot buy stock that is not there. Units another
+    unpacked order is waiting for stay, so held units never exceed those on hand, until that order's picker reports
+    the same empty bin.
   \item \textbf{Packing.} Commits the sale for every picked line (\texttt{qty\_on\_hand} and \texttt{qty\_reserved}
     both drop) and publishes \texttt{order.ready\_for\_pickup}. An order with nothing picked is cancelled instead.
   \item \textbf{The handheld.} \texttt{/picker.html} is a phone screen: one line at a time (``Go to bin A-01-04,

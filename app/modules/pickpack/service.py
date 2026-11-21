@@ -302,6 +302,9 @@ def report_short(db: Session, task_id: int, found: int | None = None, actor: str
         inventory.unreserve(db, job.store_id, task.sku_id, lost)
         fulfilment.publish_line_dropped(db, job, task.sku_id, lost)
     db.flush()
+    # The bin is empty, so the rest of its count is wrong too: without this, ATP kept selling units that are not there
+    # (issue #61). Last, so the hold of units just dropped is already given back and those units go too.
+    inventory.write_off_unpromised(db, item, reference=f"job:{job.id}", actor=actor)
     if lost:
         offer = find_substitute(db, job.store_id, task.sku_id, lost)
     fulfilment.resequence(db, job)

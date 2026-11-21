@@ -96,10 +96,10 @@ def test_found_four_of_six_with_no_other_stock_picks_four_and_drops_two(client, 
     assert body["message"].startswith("4 picked. Count corrected.")
     rice_lines = sorted((t["status"], t["qty"]) for t in body["job"]["tasks"])
     assert rice_lines == [("picked", 4), ("short", 2)]
-    assert stock(client, rice) == (28, 4)                     # 2 written off; the 4 in the tote are still held
+    assert stock(client, rice) == (4, 4)                      # the rest of the bin written off; the 4 in the tote held
 
     client.post(f"/v1/fulfilment-jobs/{job['job_id']}/packed", json={"crate_slot": "S-01"})
-    assert stock(client, rice) == (24, 0)
+    assert stock(client, rice) == (0, 0)
     assert_stock_is_consistent()
 
 

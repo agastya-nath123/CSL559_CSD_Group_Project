@@ -641,6 +641,38 @@ def write_off_missing(db: Session, item: StockItem, qty: int, reference: str, ac
     _ledger(db, item.store_id, item.sku_id, item.bin_id, -take, "not_found", reference, actor)
 
 
+def write_off_unpromised(db: Session, item: StockItem, reference: str, actor: str) -> int:
+    """A picker found this bin empty: write off the units in it that no unpacked order's line covers, and return how
+    many. Call it after `write_off_missing` has taken the picker's own line. Does not commit.
+
+    They are not on the shelf either, and left in the count they stay in ATP, so customers could keep buying stock
+    that is not there until the bin is counted. Units another unpacked order is waiting for stay: that order holds
+    them, and taking them would leave more held than on hand; its picker reports them when they reach the line.
+    Unpaid holds are on the SKU, not a bin, so on-hand never goes below what is held (`reserved_over_on_hand` stays
+    something only an expiry write-off causes). That check and the on-hand change are one conditional UPDATE, like the
+    hold in `reserve`: a hold placed at the same moment either lands first (and nothing goes) or sees the smaller
+    count."""
+    db.flush()
+    db.refresh(item, ["qty"])
+    take = item.qty - _promised(db, item)
+    level = get_level(db, item.store_id, item.sku_id)
+    take = min(take, level.qty_on_hand - level.qty_reserved)
+    if take <= 0:
+        return 0
+    changed = db.execute(
+        update(StockLevel)
+        .where(StockLevel.store_id == item.store_id, StockLevel.sku_id == item.sku_id,
+               StockLevel.qty_on_hand - StockLevel.qty_reserved >= take)
+        .values(qty_on_hand=StockLevel.qty_on_hand - take, version=StockLevel.version + 1)
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    if changed == 0:
+        return 0                               # a hold landed in between: leave the bin to its count
+    _change_item_qty(db, item, -take)
+    _ledger(db, item.store_id, item.sku_id, item.bin_id, -take, "not_found", reference, actor)
+    return take
+
+
 # --------------------------------------------------------------------------- allocation (FEFO, FR-10)
 
 
