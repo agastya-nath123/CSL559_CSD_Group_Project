@@ -140,7 +140,8 @@ def _apply(db: Session, count: CycleCount, decided_by: str) -> None:
         delta = line.counted_qty - line.system_qty
         if delta:
             inventory.adjust(db, count.store_id, line.sku_id, delta, "count", bin_id=count.bin_id,
-                             actor=decided_by, reference=f"count:{count.id}", commit=False)
+                             actor=decided_by, reference=f"count:{count.id}", commit=False,
+                             shelf_rules=False)
 
 
 def approve(db: Session, count_id: int, decided_by: str, may_approve_own: bool = False) -> CycleCount:

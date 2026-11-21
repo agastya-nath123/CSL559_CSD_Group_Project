@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from ... import config, events, metrics
 from ...cache import atp_cache
 from ...errors import DomainError, not_found
-from ...models import (SKU, Bin, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
+from ...models import (SKU, Bin, CycleCount, EventLog, FulfilmentJob, PickTask, Reservation, ReservationLine, StockItem,
                        StockLedger, StockLevel, Store, utcnow)
 
 # --------------------------------------------------------------------------- lookups
@@ -123,6 +123,15 @@ def set_safety_buffer(db: Session, store_id: int, sku_id: int, safety_buffer: in
 # --------------------------------------------------------------------------- reservations (FR-3)
 
 
+def _retry_of(existing: Reservation, store_id: int, wanted: dict[int, int]) -> Reservation:
+    """The hold an order id already has, if this call asks for that same order again (a retry). Anything else is a
+    different order using the id, and gets no look at the first one: its reply would carry the reservation id, which
+    is all that confirm and release ask for."""
+    if existing.store_id != store_id or {line.sku_id: line.qty for line in existing.lines} != wanted:
+        raise DomainError(409, "order_id_reused", "This order id already belongs to a different order; use a new one")
+    return existing
+
+
 def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, int]],
             h3_cell: str | None = None) -> Reservation:
     """Hold stock for a whole cart, or for none of it. `h3_cell` (optional) is the H3 cell of the delivery
@@ -132,13 +141,10 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
     only succeeds if enough unreserved stock exists at that instant. If any line fails, the whole
     transaction is rolled back, so a cart is held whole or not at all.
 
-    `order_id` is the idempotency key: calling this twice with the same order returns the first hold.
+    `order_id` is the idempotency key: calling this twice with the same order returns the first hold. "The same
+    order" means the same store and the same lines; an order id that is already used for anything else is refused
+    (409 order_id_reused), so nobody is handed another customer's hold.
     """
-    existing = db.scalar(select(Reservation).where(Reservation.order_id == order_id))
-    if existing is not None:
-        return existing
-    get_store(db, store_id)
-
     wanted: dict[int, int] = {}
     for sku_id, qty in lines:
         if qty <= 0:
@@ -146,6 +152,11 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
         wanted[sku_id] = wanted.get(sku_id, 0) + qty
     if not wanted:
         raise DomainError(422, "empty_cart", "A reservation needs at least one line")
+
+    existing = db.scalar(select(Reservation).where(Reservation.order_id == order_id))
+    if existing is not None:
+        return _retry_of(existing, store_id, wanted)
+    get_store(db, store_id)
 
     failed: list[int] = []
     for sku_id, qty in wanted.items():
@@ -190,7 +201,7 @@ def reserve(db: Session, order_id: str, store_id: int, lines: list[tuple[int, in
         db.flush()
     except IntegrityError:            # the same order_id arrived twice at the same moment
         db.rollback()
-        return db.scalar(select(Reservation).where(Reservation.order_id == order_id))
+        return _retry_of(db.scalar(select(Reservation).where(Reservation.order_id == order_id)), store_id, wanted)
     for sku_id in wanted:
         events.publish(db, "stock.changed", store_id, {"sku_id": sku_id, "cause": "reserved"})
     db.commit()
@@ -405,7 +416,11 @@ def _change_item_qty(db: Session, item: StockItem, delta: int) -> None:
 def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batch_no: str,
             expiry_date: date, reference: str | None = None, actor: str = "receiver") -> StockItem:
     """Put received stock into a bin (FR-9). The units are sellable as soon as this returns.
-    Does not commit."""
+    Does not commit.
+
+    A batch number means one expiry date. If units of this batch are already in the store with another date, the
+    delivery is refused (409 batch_expiry_mismatch): added to that batch, the new units would be sold (FEFO) and
+    written off by the old date. An emptied batch whose number comes round again takes the new date."""
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Received quantity must be at least 1")
     sku = get_sku(db, sku_id)
@@ -415,6 +430,17 @@ def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batc
     if bin_.zone != sku.storage_type:
         raise DomainError(422, "wrong_zone",
                           f"{sku.name} needs {sku.storage_type} storage but bin {bin_.code} is {bin_.zone}")
+    other_date = db.scalar(
+        select(StockItem.expiry_date).where(
+            StockItem.store_id == store_id, StockItem.sku_id == sku_id, StockItem.batch_no == batch_no,
+            StockItem.qty > 0, StockItem.expiry_date != expiry_date,
+        ).limit(1)
+    )
+    if other_date is not None:
+        raise DomainError(409, "batch_expiry_mismatch",
+                          f"Batch {batch_no} of {sku.name} is already in this store with expiry date "
+                          f"{other_date.isoformat()}, not {expiry_date.isoformat()}; give this delivery its own "
+                          "batch number", {"batch_no": batch_no, "expiry_date": other_date.isoformat()})
     item = db.scalar(
         select(StockItem).where(
             StockItem.store_id == store_id, StockItem.sku_id == sku_id,
@@ -425,6 +451,8 @@ def receive(db: Session, store_id: int, sku_id: int, qty: int, bin_id: int, batc
         item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no=batch_no,
                          expiry_date=expiry_date, qty=0)
         db.add(item)
+    else:
+        item.expiry_date = expiry_date           # the same date, or an emptied batch number used again
     _change_item_qty(db, item, +qty)
     _change_on_hand(db, store_id, sku_id, +qty)
     _ledger(db, store_id, sku_id, bin_id, +qty, "receipt", reference, actor)
@@ -438,9 +466,11 @@ def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str 
     commit. Nothing is gained or lost: two ledger rows with reason `move` (out of one bin, into the other) that sum
     to zero, and qty_on_hand is untouched, so ATP does not change.
 
-    Refused: a bin of the wrong temperature zone (422 wrong_zone), and units a picker has been sent to this bin for
-    (409 promised_to_picker). Bin capacity is Slotting's rule, so the caller checks it. Returns the batch's row
-    in the new bin."""
+    Refused: a bin of the wrong temperature zone (422 wrong_zone), units a picker has been sent to this bin for
+    (409 promised_to_picker), and a move out of or into a bin with an open cycle count (409 bin_being_counted): the
+    counter's numbers are compared with the records when they are handed in, so units moved in between would be
+    added a second time or written off. Bin capacity is Slotting's rule, so the caller checks it. Returns the
+    batch's row in the new bin."""
     if qty <= 0:
         raise DomainError(422, "bad_quantity", "Moved quantity must be at least 1")
     to_bin = db.get(Bin, to_bin_id)
@@ -452,6 +482,11 @@ def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str 
     if to_bin.zone != sku.storage_type:
         raise DomainError(422, "wrong_zone",
                           f"{sku.name} needs {sku.storage_type} storage but bin {to_bin.code} is {to_bin.zone}")
+    counted = db.scalar(select(Bin.code).join(CycleCount, CycleCount.bin_id == Bin.id)
+                        .where(CycleCount.bin_id.in_((item.bin_id, to_bin.id)), CycleCount.status == "open").limit(1))
+    if counted is not None:
+        raise DomainError(409, "bin_being_counted",
+                          f"Bin {counted} is being counted; move the stock after the count is handed in")
     db.refresh(item, ["qty"])
     free = item.qty - _promised(db, item)
     if qty > free:
@@ -473,29 +508,43 @@ def move(db: Session, item: StockItem, to_bin_id: int, qty: int, reference: str 
 
 
 def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin_id: int | None = None,
-           actor: str = "manager", reference: str | None = None, commit: bool = True) -> dict:
+           actor: str = "manager", reference: str | None = None, commit: bool = True,
+           shelf_rules: bool | None = None) -> dict:
     """Correct the stock count (FR-11): damage, expiry, theft, or a cycle-count difference.
 
-    Negative delta removes units (from `bin_id` if given, otherwise earliest-expiry first).
-    Positive delta adds found units and needs a `bin_id`.
+    Negative delta removes units (from `bin_id` if given, otherwise earliest-expiry first). Units already scanned
+    into a tote are never taken, as in expire_stock and write_off_missing: they are off the shelf, and their order
+    could not be packed without them (409 in_tote when the shelf alone does not have enough).
+    Positive delta adds found units and needs a `bin_id`. The bin must be of the SKU's temperature zone
+    (422 wrong_zone) and have room (409 bin_full), as for a goods receipt. A cycle count is exempt: it records what
+    is really on the shelf, even where it should not be. So `shelf_rules` is on by default for every reason but
+    `count`; the stock-adjustment endpoint always passes True, whatever reason the request gives.
     `commit=False` leaves the transaction open, so the caller can save an idempotency record with it.
     """
     if delta == 0:
         raise DomainError(422, "bad_quantity", "delta cannot be 0")
+    if shelf_rules is None:
+        shelf_rules = reason != "count"
     get_store(db, store_id)
     sku = get_sku(db, sku_id)
 
     if delta > 0:
         if bin_id is None:
             raise DomainError(422, "bin_required", "Adding stock needs a bin_id")
+        bin_ = db.get(Bin, bin_id)
+        if bin_ is None or bin_.store_id != store_id:
+            raise DomainError(422, "bad_bin", f"Bin {bin_id} is not in store {store_id}")
+        if shelf_rules:
+            if bin_.zone != sku.storage_type:
+                raise DomainError(422, "wrong_zone",
+                                  f"{sku.name} needs {sku.storage_type} storage but bin {bin_.code} is {bin_.zone}")
+            from ..slotting import service as slotting      # imported here: slotting imports this module
+            slotting.ensure_room(db, store_id, bin_id, delta)
         item = db.scalar(
             select(StockItem).where(StockItem.store_id == store_id, StockItem.sku_id == sku_id,
                                     StockItem.bin_id == bin_id).order_by(StockItem.expiry_date)
         )
         if item is None:
-            bin_ = db.get(Bin, bin_id)
-            if bin_ is None or bin_.store_id != store_id:
-                raise DomainError(422, "bad_bin", f"Bin {bin_id} is not in store {store_id}")
             item = StockItem(store_id=store_id, sku_id=sku_id, bin_id=bin_id, batch_no="ADJ",
                              expiry_date=date.today() + timedelta(days=sku.shelf_life_days), qty=0)
             db.add(item)
@@ -510,10 +559,16 @@ def adjust(db: Session, store_id: int, sku_id: int, delta: int, reason: str, bin
         items = db.scalars(query.order_by(StockItem.expiry_date)).all()
         if sum(i.qty for i in items) < to_remove:
             raise DomainError(409, "not_enough_stock", "Cannot remove more units than are on the shelf")
+        on_shelf = {i.id: max(0, i.qty - _in_totes(db, i)) for i in items}
+        if sum(on_shelf.values()) < to_remove:
+            raise DomainError(409, "in_tote",
+                              f"Only {sum(on_shelf.values())} of those units are still on the shelf; the rest are in "
+                              "a picker's tote for an order that is not packed yet",
+                              {"on_shelf": sum(on_shelf.values())})
         for item in items:
-            take = min(item.qty, to_remove)
+            take = min(on_shelf[item.id], to_remove)
             if take == 0:
-                break
+                continue
             _remove_from_item(db, item, take, reason, reference, actor, change_on_hand=False)
             to_remove -= take
 

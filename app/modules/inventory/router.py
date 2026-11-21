@@ -58,7 +58,6 @@ class AdjustmentIn(BaseModel):
     delta: int = Field(ge=-MAX_BIN_UNITS, le=MAX_BIN_UNITS)
     reason: str = Field(pattern="^(damage|expiry|theft|count)$")
     bin_id: Id | None = None
-    actor: str = "manager"
 
 
 @router.put("/v1/stores/{store_id}/stock-settings/{sku_id}",
@@ -110,11 +109,12 @@ def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db),
                           None, min_length=1, max_length=80,
                           description="Any unique string. A retry with the same key does not change stock again; "
                                       "it returns the first answer.")):
-    """Correct the count. Send an Idempotency-Key so a double-click or a network retry writes off only once."""
+    """Correct the count. Send an Idempotency-Key so a double-click or a network retry writes off only once.
+    The stock ledger records the logged-in user as the one who did it."""
     check_store(staff, body.store_id)
     return run_once(db, "stock-adjustment", idempotency_key, body.model_dump(),
                     lambda: service.adjust(db, body.store_id, body.sku_id, body.delta, body.reason, body.bin_id,
-                                           body.actor, commit=False))
+                                           actor=staff["sub"], commit=False, shelf_rules=True))
 
 
 @router.get("/v1/stores/{store_id}/stock")

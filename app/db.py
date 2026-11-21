@@ -80,6 +80,14 @@ def _bring_up_to_date(recreate: bool) -> None:
             # nothing left to do. Released when this transaction ends. (SQLite allows one writer anyway.)
             connection.execute(text("SELECT pg_advisory_xact_lock(:n)"), {"n": MIGRATION_LOCK})
         tables = set(inspect(connection).get_table_names())
+        if recreate and connection.dialect.name == "sqlite" and "alembic_version" in tables:
+            # SQLite does not hold other connections back while tables are dropped: for a few seconds they found
+            # "no such table" and answered 500 (issue #59). So keep the tables and delete their rows, children first.
+            # Other connections go on reading the old rows until this commits. Ids start at 1 again by themselves.
+            _alembic(connection, "upgrade", "head")
+            for table in reversed(Base.metadata.sorted_tables):
+                connection.execute(table.delete())
+            return
         if recreate or not tables - {"alembic_version"}:
             if recreate:
                 Base.metadata.drop_all(connection)
@@ -92,9 +100,11 @@ def _bring_up_to_date(recreate: bool) -> None:
 
 
 def recreate_tables() -> None:
-    """Drop every table and create it again, empty, straight from models.py (seed.reset), and record that the
-    database is at the newest migration. One transaction, so on PostgreSQL the timed jobs and other requests wait
-    for the new tables instead of finding none."""
+    """Empty the database for seed.reset, with every table as models.py describes it and ids starting at 1.
+
+    PostgreSQL: drop every table and create it again in one transaction; the timed jobs and other requests wait for
+    the new tables instead of finding none. SQLite cannot make them wait, so there the tables stay and only their
+    rows are deleted. A SQLite file from before migrations is still dropped and created, as it may have old tables."""
     _bring_up_to_date(recreate=True)
 
 

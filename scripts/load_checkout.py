@@ -66,7 +66,7 @@ def prepare(admin, store_id: int, units: int, sku_id: int | None = None) -> int:
             raise RuntimeError(f"SKU {sku_id} has no bin in store {store_id} to add stock to; pick another --sku")
         _ok(admin.post("/v1/stock-adjustments", json={
             "store_id": store_id, "sku_id": sku_id, "delta": delta, "reason": "count",
-            "bin_id": bins[0] if delta > 0 else None, "actor": "load-checkout"}))
+            "bin_id": bins[0] if delta > 0 else None}))
     return sku_id
 
 

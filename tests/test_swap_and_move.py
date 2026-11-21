@@ -10,6 +10,7 @@ from app.models import Bin, Reservation, StockItem, StockLedger
 from app.modules.inventory import service as inventory
 
 from .conftest import assert_stock_is_consistent, place_paid_order
+from .test_cycle_counts import start, submit
 from .test_order_flow import next_job
 
 
@@ -148,4 +149,26 @@ def test_units_a_picker_has_been_sent_for_cannot_be_moved_away(client, db, sku):
     inventory.move(db, item, others[0].id, 5)                   # the 5 nobody is waiting for
     db.commit()
     assert item.qty == 25
+    assert_stock_is_consistent()
+
+
+def test_stock_cannot_move_out_of_or_into_a_bin_that_is_being_counted(client, db, sku):
+    """Found in the review of #70: a count taken before a move, handed in after it, added the moved units a second
+    time (30 rice became 60). A count compares with the records at the moment it is handed in."""
+    rice, sugar = sku("Basmati rice"), sku("Sugar")
+    item, others = rice_and_bins(db, sku)
+    sugar_item = db.scalar(select(StockItem).where(StockItem.store_id == 1, StockItem.sku_id == sugar))
+    count = start(client, rice)                                  # someone is counting the rice bin
+
+    def refusal(moving: StockItem, to_bin_id: int) -> str:
+        with pytest.raises(DomainError) as refused:
+            inventory.move(db, moving, to_bin_id, 5)
+        return refused.value.code
+
+    assert refusal(item, others[0].id) == "bin_being_counted"    # out of it
+    assert refusal(sugar_item, item.bin_id) == "bin_being_counted"   # into it
+    assert submit(client, count, {rice: 30}).status_code == 200  # handed in: nothing differed
+    inventory.move(db, item, others[0].id, 5)
+    db.commit()
+    assert level(client, rice) == (30, 0, 30)
     assert_stock_is_consistent()
