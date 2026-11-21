@@ -46,7 +46,8 @@ Each file is short. Read all five `service.py` files (about 25 minutes).
 | `inbound.close_receipt` | `POST /v1/goods-receipts/{id}/close` | Marks the transfer order received and reports ordered versus received for every SKU; `send_back=true` returns what is left on the dock. Refused for a receipt with nothing scanned (`409 nothing_scanned`) |
 | `inbound.cancel_receipt` | `POST /v1/goods-receipts/{id}/cancel` | Drops a receipt opened or scanned by mistake, before anything is put away; the transfer order stays on its way |
 | `inbound.receive_goods` | `POST /v1/goods-receipts` | The one-call receipt: runs the five steps in order |
-| `slotting.suggest_bin`, `slotting.place` | Inbound | Same SKU's bin with room, else the emptiest bin with room in the right temperature zone; `place` splits a delivery over bins, never past a bin's capacity |
+| `slotting.velocity`, `plan`, `apply` | `GET /v1/slotting/plan`, `POST /v1/slotting/apply` | Ranks each zone's SKUs by units sold a day over 14 days and gives the fastest the bins nearest the packing desk; `apply` moves the batches with `inventory.move`, never past a bin's capacity, and skips batches promised to a picker |
+| `slotting.suggest_bin`, `slotting.place` | Inbound | The SKU's planned home bin first, then its own bins, then the emptiest bin with room in the right temperature zone; `place` splits a delivery over bins, never past a bin's capacity |
 | `assortment.add_sku` | `POST /v1/stores/{id}/assortment` | Starts carrying a SKU (a zero-stock `StockLevel` row) |
 
 ### Try it by hand

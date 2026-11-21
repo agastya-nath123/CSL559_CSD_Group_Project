@@ -186,6 +186,7 @@ state), `422` for bad input, and `404` via `errors.not_found(...)`.
 | Stuck orders | No claim, scan or shelf report for `PICK_STALL_MINUTES`: back to the queue every `STALL_CHECK_SECONDS` (`fulfilment.recover_stalled`), or flagged if items are in a tote | Member 2: done |
 | Batch picking at peak | Up to `BATCH_SIZE` oldest orders in one walk at peak, one tote each; not grouped by where their items are | Member 2: done |
 | Scan-item-then-bin putaway | Saved goods receipts in five steps: open, scan onto the dock, putaway tasks, put away line by line (sellable at once), close with the shortfalls; damaged and short-dated units are never stocked; `Idempotency-Key` on every write | Member 3: done; the ops screen still receives in one call |
+| Fast movers near the packing station (slotting) | Each zone's SKUs ranked by 14 days of sales get bins in walking order: a look-only plan, an apply through `inventory.move` within bin capacity, new deliveries to the planned bin; `scripts/compare_slotting.py` measures the walk before and after | Member 3: done; bins are re-sorted only within a temperature zone, and there is no affinity rule |
 | Store edge node | Not built; design note and an outage experiment in [`EDGE_NODE.md`](EDGE_NODE.md) | Member 4 (design only) |
 | Monitoring and KPIs | Prometheus metrics at `GET /metrics`, request ids and JSON logs (section 9); Prometheus with the alert rules and a Grafana dashboard in Docker Compose (`--profile monitoring`); no Alertmanager | Members 2, 3 and 4 |
 

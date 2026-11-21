@@ -135,7 +135,8 @@ def scan(db: Session, receipt_id: int, barcode: str, qty: int, batch_no: str | N
 
 def putaway_tasks(db: Session, receipt_id: int) -> list[dict]:
     """Where to put what waits on the dock (HLD 6.3, step 3): one task per bin portion from slotting.place, the SKU's
-    own bins first and never past a bin's capacity. A line that cannot be placed gets one task with bin_code None and
+    planned home bin first, then its own bins, never past a bin's capacity. A line that cannot be placed gets one task
+    with bin_code None and
     the reason. Tasks reflect the bins as they are now: put lines away one at a time. None once the receipt is closed
     or cancelled: what was left on the dock went back. Read-only."""
     receipt = get_receipt(db, receipt_id)
@@ -283,8 +284,11 @@ def receive_goods(db: Session, store_id: int, lines: list[dict], transfer_order_
     """The one-call goods receipt: the five steps in order. Each line (sku_id, qty, and optionally batch_no,
     expiry_date, bin_id) is scanned, then put away: into its bin_id if given, otherwise over the bins Slotting picks,
     never past a bin's capacity. A batch refused for too little shelf life is listed under "rejected" (and in
-    "discrepancies" when ordered); any other refusal, such as 409 bin_full, keeps nothing of the receipt."""
+    "discrepancies" when ordered); any other refusal, such as 409 bin_full, keeps nothing of the receipt. The store's
+    bins are locked first, in the order re-slotting locks them: one bin per line, in line order, could deadlock with
+    it on PostgreSQL."""
     receipt_id = open_receipt(db, store_id, transfer_order_id, commit=False)["receipt_id"]
+    slotting.lock_store_bins(db, store_id)
     received, rejected = [], []
     for line in lines:
         sku = inventory.get_sku(db, line["sku_id"])

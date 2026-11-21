@@ -21,6 +21,8 @@ ROUTES = [
     ("GET", "/v1/stores/{id}/bins"),
     ("GET", "/v1/slotting/suggest?store_id={id}&sku_id=1"),
     ("GET", "/v1/slotting/suggest?store_id=1&sku_id={id}"),
+    ("GET", "/v1/slotting/plan?store_id={id}"),
+    ("POST", "/v1/slotting/apply?store_id={id}"),
     ("GET", "/v1/stores/{id}/assortment"),
     ("POST", "/v1/stores/{id}/assortment"),
     ("GET", "/v1/stores/{id}/assortment/recommendations"),

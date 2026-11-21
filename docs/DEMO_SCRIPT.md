@@ -15,7 +15,7 @@ so the transfer order in section 7 comes from the button, not from the timer hal
 Then, in a second terminal:
 
 ```bash
-python scripts/load_test.py --seconds 30 --reset   # once, before the audience arrives; keep its table for section 11
+python scripts/load_test.py --seconds 30 --reset   # once, before the audience arrives; keep its table for section 12
 python scripts/generate_sales.py                   # after every reset
 python scripts/generate_demand.py                  # after every reset
 ```
@@ -23,7 +23,7 @@ python scripts/generate_demand.py                  # after every reset
 The load test places real orders, so press **Reset demo data** after it and run the two generators again.
 The sales generator gives the forecast in section 7 two months of sales; the demo data alone has one week,
 too little to forecast from the same weekday or to measure forecast error. The demand generator adds the
-delivery lookups the map in section 10 needs, including ones no store could serve.
+delivery lookups the map in section 11 needs, including ones no store could serve.
 
 Open http://localhost:8000 in **two browser windows** side by side (you need the second one for
 steps 3 and 4). Keep the store selector on *DS-01 Central*.
@@ -159,7 +159,26 @@ Open http://localhost:8000/docs.
 > "A manager can hide a few units of an item whose count is often a little off, so customers are never
 > sold the last unit that may not be on the shelf."
 
-## 10. Where to open the next store (1 minute)
+## 10. Fast movers near the packing desk (1 minute, optional)
+
+Still logged in as `manager1` in Swagger. Do this after the picking steps: it can move milk's second batch.
+
+1. **GET /v1/slotting/plan** → *Try it out* → `store_id` *1* → *Execute*. `homes` ranks each zone's items by
+   how fast they sold over the last 14 days, fastest in the bin nearest the packing desk; `moves` lists the
+   batches to move there.
+2. **POST /v1/slotting/apply** → `store_id` *1* → *Execute*. `moved` says what went where. A batch a picker is
+   on the way to would be under `skipped`, and no bin is ever filled past its capacity.
+
+> "Fast movers live nearest the packing desk. Stock is moved, never gained or lost: two ledger rows per batch.
+> New deliveries go straight to an item's planned bin, so the shelf re-sorts itself as stock arrives."
+
+3. In the terminal: `python scripts/compare_slotting.py` (a few seconds, on its own copy of the data).
+
+> "Orders of shelf items walk less. Most orders also hold a chilled item, and the fridges are at the far end of
+> the walk, so the overall saving is small: moving the fridges nearer the desk would help more, and that is a
+> layout change, not slotting."
+
+## 11. Where to open the next store (1 minute)
 
 Open http://localhost:8000/network.html.
 
@@ -172,7 +191,7 @@ Open http://localhost:8000/network.html.
 > "Every lookup we could not serve is recorded by hexagon. The suggestions pick, one at a time, the site that
 > reaches the most of them, outside our current zones."
 
-## 11. The ops dashboard and the load test (1 minute)
+## 12. The ops dashboard and the load test (1 minute)
 
 Open http://localhost:8000/ops.html.
 
@@ -187,7 +206,7 @@ Open http://localhost:8000/ops.html.
 > This is one laptop and SQLite, not the HLD's cluster, so the number shows where time goes, not what
 > production would do. Prometheus can scrape the same timings from /metrics."
 
-## 12. Close (30 seconds)
+## 13. Close (30 seconds)
 
 Back on http://localhost:8000/docs.
 
